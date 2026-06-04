@@ -61,7 +61,7 @@ export default function FileUpload() {
     e.target.value = '';
   };
 
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = (e: React.DragEvent<HTMLButtonElement>) => {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
     if (file) handleFile(file);
