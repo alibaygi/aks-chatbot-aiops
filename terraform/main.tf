@@ -18,7 +18,14 @@ terraform {
 }
 
 provider "azurerm" {
-  features {}
+  features {
+    resource_group {
+      # AKS auto-provisions resources (e.g. ContainerInsights solution) that
+      # Terraform doesn't manage. Without this flag, terraform destroy fails
+      # if any such resources remain in the group at deletion time.
+      prevent_deletion_if_contains_resources = false
+    }
+  }
 }
 
 # ── Resource Group ─────────────────────────────────────────────────────────────
