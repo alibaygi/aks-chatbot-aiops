@@ -43,7 +43,7 @@ block in `terraform/main.tf` to store it in an Azure Storage Account instead.
 
 Once `terraform apply` finishes you have a running cluster and a container registry.
 Everything after this point — building images and deploying the Helm chart — is handled
-automatically by GitHub Actions whenever you publish a release.
+automatically by GitHub Actions whenever you push to `main`.
 
 > **Can GitHub Actions provision infra too?** Technically yes — you could add a Terraform
 > step inside a workflow. In practice it is almost always kept manual (or behind a strict
@@ -55,10 +55,10 @@ automatically by GitHub Actions whenever you publish a release.
 This repo has two workflows in `.github/workflows/`:
 
 - **pr_checks.yaml** — runs lint + tests on every pull request to `main`.
-- **deploy.yml** — builds the images and deploys to AKS every time you **publish a GitHub Release**.
+- **deploy.yml** — builds the images and deploys to AKS every time you **push to `main`**.
 
 This guide gets `deploy.yml` working: get credentials from Azure → store them as
-secrets → publish a release to deploy.
+secrets → push to main to deploy.
 
 ---
 
@@ -77,9 +77,9 @@ git remote add origin https://github.com/alibaygi/aks-chatbot-aiops.git
 git push -u origin main
 ```
 
-> Pushing to `main` only runs PR checks — it does **not** deploy. The deploy runs
-> when you publish a Release (Section 4). So finish the Azure setup (Sections 2–3)
-> first, then publish your first release.
+> Pushing to `main` triggers the deploy workflow. Finish the Azure setup (Sections 2–3)
+> and store the GitHub Secrets (Section 3) **before** your first push, otherwise the
+> Azure login step will fail.
 
 ---
 
@@ -115,13 +115,24 @@ OBJECT_ID=$(az ad app show --id "$APP_ID" --query id -o tsv)
 az ad sp create --id "$APP_ID"
 ```
 
-**Chunk 3 — trust pushes from your main branch** (OIDC federated credential)
+**Chunk 3 — trust GitHub Actions from the main branch** (OIDC federated credential)
+
+The deploy pipeline fires on a **push to `main`**, so you only need one federated
+credential covering the `main` branch. Both the deploy workflow and PR checks use it.
 
 ```bash
+# Trust the main branch (used by both deploy and PR checks)
 az ad app federated-credential create \
   --id "$OBJECT_ID" \
   --parameters "{\"name\": \"github-main\", \"issuer\": \"https://token.actions.githubusercontent.com\", \"subject\": \"repo:${GH_ORG}/${GH_REPO}:ref:refs/heads/main\", \"audiences\": [\"api://AzureADTokenExchange\"]}"
 ```
+
+> **Why not use release tags?** Azure AD federated credentials perform **exact string
+> matching** on the subject claim — wildcards are not supported, despite being accepted
+> during credential creation. A credential with subject `refs/tags/*` is stored but
+> never matches any real tag (e.g. `refs/tags/v0.2.1`), causing `AADSTS700213` at
+> runtime. The push-to-main trigger avoids this entirely: the subject is always the
+> literal string `repo:ORG/REPO:ref:refs/heads/main`, which matches exactly.
 
 **Chunk 4 — assign roles so the workflow can push images and deploy**
 
@@ -193,21 +204,24 @@ your repo → **Settings → Secrets and variables → Actions**, then add three
 
 ---
 
-## 4. Trigger the Workflow (Publish a Release)
+## 4. Trigger the Workflow (Push to main)
 
-The pipeline is **release-based**: it fires only when you publish a GitHub Release.
-A plain `git push` to `main` does **not** deploy. To ship a new version:
+The pipeline is **push-based**: it fires automatically every time you merge or push
+to `main`. To deploy a new version:
 
-1. Go to your repo → **Releases** (right sidebar) → **Draft a new release**
-2. **Choose a tag** → type a version like `v0.2.0` → **Create new tag on publish**
-3. Give it a title (e.g. `v0.2.0`) and optional notes
-4. Click **Publish release**
+```bash
+git push origin main
+```
 
-That immediately triggers `deploy.yml`. The release tag becomes the image version —
-e.g. `v0.2.0` produces images tagged `0.2.0-<run_number>`.
+That's it. GitHub Actions picks it up, builds the images, and deploys to AKS. The
+image tag is derived from the commit SHA + run number, e.g. `abc1234-42`, so every
+build is uniquely traceable back to an exact commit.
 
-> Prefer the terminal? `gh release create v0.2.0 --title "v0.2.0" --notes "..."`
-> does the same thing.
+You can also trigger the workflow manually without a push:
+
+1. Go to your repo → **Actions** tab
+2. Click **Build and Deploy to AKS** in the left sidebar
+3. Click **Run workflow** → **Run workflow**
 
 ---
 
@@ -216,7 +230,7 @@ e.g. `v0.2.0` produces images tagged `0.2.0-<run_number>`.
 1. Go to your repo → **Actions** tab
 2. Click the running **Build and Deploy to AKS** workflow to open the logs
 3. The steps run in order:
-   - **derive image tag** → from the release tag, e.g. `0.2.0-42`
+   - **derive image tag** → from the commit SHA + run number, e.g. `abc1234-42`
    - **(optional) eval gate** → only if `RUN_EVAL_GATE = true`
    - **Azure login (OIDC)** → fails here if a secret is wrong
    - **az acr build** → builds backend + frontend images inside Azure
@@ -292,11 +306,11 @@ kubectl describe pod <pod-name>  # see events (e.g. image pull failure, bad secr
 ## Quick Reference
 
 ```
-Publish a GitHub Release (tag e.g. v0.2.0)
+git push origin main
         ↓
 GitHub Actions: deploy.yml
         ↓
-derive image tag from tag → (eval gate?) → Azure login (OIDC)
+derive image tag (SHA-42) → (eval gate?) → Azure login (OIDC)
         ↓
 az acr build backend + frontend   (builds in Azure)
         ↓
@@ -307,6 +321,7 @@ helm upgrade --install            (rolling deploy to AKS)
 |---|---|
 | Azure setup commands | Section 2 (or README → Phase 2) |
 | The 4 required secrets | Section 3 table |
-| Trigger a deploy | Publish a Release (Section 4) |
+| Trigger a deploy | `git push origin main` (Section 4) |
+| Manual trigger (no push) | Actions tab → Build and Deploy → Run workflow |
 | Watch / debug a run | Actions tab → click the run → expand the failed step |
 | Open the chatbot | `kubectl get svc frontend` → EXTERNAL-IP → open in browser (Section 7) |
