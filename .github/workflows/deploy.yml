@@ -97,8 +97,7 @@ jobs:
           az acr build \
             --registry ${{ env.ACR_NAME }} \
             --image chatbot/frontend:${{ steps.version.outputs.image_tag }} \
-            --context ./frontend \
-            --file frontend/Dockerfile \
+            --file Dockerfile \
             ./frontend
 
       # ── 7. Set AKS context ─────────────────────────────────────────────────
