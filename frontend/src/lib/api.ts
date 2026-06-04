@@ -24,6 +24,21 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// ─── Generic authenticated fetch ─────────────────────────────────────────────
+// Used when callers need direct control over the request (e.g. FormData uploads).
+// Does not set Content-Type so multipart boundaries are handled by the browser.
+
+export async function apiFetch<T = unknown>(
+  url: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const token = getToken();
+  const headers = new Headers(options.headers as HeadersInit);
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const res = await fetch(url, { ...options, headers });
+  return handleResponse<T>(res);
+}
+
 // ─── Auth ────────────────────────────────────────────────────────────────────
 
 export async function apiRegister(email: string, password: string): Promise<User> {
