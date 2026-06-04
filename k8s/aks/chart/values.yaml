@@ -1,0 +1,63 @@
+# ── Postgres ──────────────────────────────────────────────────────────────────
+postgres:
+  image: "pgvector/pgvector:pg16"
+  database: postgres
+  user: postgres
+  # Azure Disk CSI driver is built into AKS — no add-on installation needed.
+  storageClassName: managed-csi
+  storageSize: 1Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ── Backend ───────────────────────────────────────────────────────────────────
+backend:
+  replicaCount: 2
+  image:
+    repository: akscontainerregistrydev.azurecr.io/chatbot/backend
+    tag: "0.1.2-1"
+    pullPolicy: Always
+  config:
+    algorithm: HS256
+    accessTokenExpireMinutes: "10080"   # 7 days
+    # Update this after the frontend LoadBalancer IP/hostname is provisioned.
+    # kubectl get service frontend-service
+    allowedOrigins: '["http://localhost:3000"]'
+    langsmithProject: "aks-chatbot"
+    langsmithTracing: "true"
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# ── Frontend ──────────────────────────────────────────────────────────────────
+frontend:
+  replicaCount: 2
+  image:
+    repository: akscontainerregistrydev.azurecr.io/chatbot/frontend
+    tag: "0.1.2-1"
+    pullPolicy: Always
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ── Secrets (leave empty here — set via values-secrets.yaml) ─────────────────
+secrets:
+  postgres:
+    password: ""
+  backend:
+    secretKey: ""
+    openaiApiKey: ""
+    tavilyApiKey: ""
+    langsmithApiKey: ""

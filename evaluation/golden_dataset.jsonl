@@ -1,0 +1,5 @@
+{"input": "What is Kubernetes?", "expected": "Kubernetes is an open-source container orchestration platform that automates deployment, scaling, and management of containerised applications."}
+{"input": "What does AKS stand for and what cloud platform does it run on?", "expected": "AKS stands for Azure Kubernetes Service and it runs on Microsoft Azure."}
+{"input": "How does a Helm chart help with Kubernetes deployments?", "expected": "A Helm chart packages all Kubernetes manifests and configuration values into a reusable, versioned bundle that can be installed or upgraded with a single command."}
+{"input": "What is the capital of France?", "expected": "The capital of France is Paris."}
+{"input": "Explain what a PersistentVolumeClaim is in Kubernetes.", "expected": "A PersistentVolumeClaim (PVC) is a request for storage by a user that binds to a PersistentVolume (PV), abstracting the underlying storage details from the application."}

@@ -1,0 +1,48 @@
+# ── Deployment ────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-deployment
+  labels:
+    app: frontend
+spec:
+  replicas: {{ .Values.frontend.replicaCount }}
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          ports:
+            - containerPort: 3000
+          env:
+            # Internal cluster DNS used by Next.js server-side to proxy /api/v1/* requests.
+            # The browser never reaches the backend directly.
+            - name: BACKEND_URL
+              value: http://backend-service:8001
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+
+---
+# ── Service ───────────────────────────────────────────────────────────────────
+# LoadBalancer: Azure provisions a public IP automatically via the AKS
+# cloud-controller-manager. The IP appears under EXTERNAL-IP in:
+#   kubectl get service frontend-service
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+spec:
+  selector:
+    app: frontend
+  ports:
+    - protocol: TCP
+      port: 3001
+      targetPort: 3000
+  type: LoadBalancer

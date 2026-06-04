@@ -1,0 +1,31 @@
+# Version control
+.git/
+.gitignore
+
+# Frontend (not needed for backend image)
+frontend/
+
+# Notebooks and docs
+notebooks/
+docs/
+
+# Python cache and build artefacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environment
+.venv/
+
+# Environment files (secrets must not enter the image)
+**/.env
+**/.env.*
+!**/.env.example
+
+# macOS
+.DS_Store

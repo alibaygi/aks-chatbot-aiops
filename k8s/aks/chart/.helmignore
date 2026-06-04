@@ -1,0 +1,4 @@
+# Patterns here prevent sensitive files from being packaged with `helm package`
+values-secrets.yaml
+*.secret.yaml
+.DS_Store
