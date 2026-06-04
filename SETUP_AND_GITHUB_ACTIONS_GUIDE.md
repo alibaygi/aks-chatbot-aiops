@@ -244,8 +244,8 @@ After the workflow succeeds, check the cluster:
 
 ```bash
 az aks get-credentials --resource-group rg-gen-project --name aksclusterdev
-kubectl get pods            # frontend, backend, postgres should be Running
-kubectl get svc frontend    # grab the LoadBalancer EXTERNAL-IP and open it
+kubectl get pods                    # frontend, backend, postgres should be Running
+kubectl get svc frontend-service    # grab the LoadBalancer EXTERNAL-IP and open it
 ```
 
 You should also see the new image tags in your registry:
@@ -264,14 +264,14 @@ Run this once to find it:
 ```bash
 az aks get-credentials --resource-group rg-gen-project --name aksclusterdev --overwrite-existing
 
-kubectl get svc frontend -n default
+kubectl get svc frontend-service -n default
 ```
 
 Look for the **EXTERNAL-IP** column in the output:
 
 ```
-NAME       TYPE           CLUSTER-IP    EXTERNAL-IP      PORT(S)        AGE
-frontend   LoadBalancer   10.0.12.34    20.82.111.222    80:31234/TCP   2m
+NAME               TYPE           CLUSTER-IP    EXTERNAL-IP      PORT(S)        AGE
+frontend-service   LoadBalancer   10.0.12.34    20.82.111.222    80:31234/TCP   2m
 ```
 
 Open `http://20.82.111.222` in your browser — that's your chatbot.
@@ -324,4 +324,168 @@ helm upgrade --install            (rolling deploy to AKS)
 | Trigger a deploy | `git push origin main` (Section 4) |
 | Manual trigger (no push) | Actions tab → Build and Deploy → Run workflow |
 | Watch / debug a run | Actions tab → click the run → expand the failed step |
-| Open the chatbot | `kubectl get svc frontend` → EXTERNAL-IP → open in browser (Section 7) |
+| Open the chatbot | `kubectl get svc frontend-service` → EXTERNAL-IP → open in browser (Section 7) |
+
+---
+
+## 8. Troubleshooting
+
+A collection of every real failure encountered when setting this pipeline up, and how
+to fix each one.
+
+---
+
+### `AADSTS700213` — Azure OIDC token rejected
+
+**Symptom:** The **Azure login** step fails with:
+
+```
+AADSTS700213: No matching federated identity record found for presented assertion subject
+```
+
+**Cause:** The subject claim in the GitHub OIDC token does not match any federated
+credential. This almost always means you created a credential with `refs/tags/*` and
+are pushing a branch, or vice versa. Azure AD does **not** support wildcards — the
+subject must be an exact string match.
+
+**Fix:**
+
+1. Find your app's object ID: `az ad app show --id "$APP_ID" --query id -o tsv`
+2. List existing credentials: `az ad app federated-credential list --id "$OBJECT_ID"`
+3. Confirm you have a credential with `subject` exactly equal to `repo:ORG/REPO:ref:refs/heads/main`
+4. If you have a stale `refs/tags/*` credential, delete it:
+   ```bash
+   az ad app federated-credential delete --id "$OBJECT_ID" --federated-credential-id github-releases
+   ```
+5. If the `github-main` credential is missing, create it (Chunk 3 in Section 2).
+
+You can see the exact subject the runner is presenting by looking for the line
+`Requesting access token for ...` in the **Azure login** step log — it shows the full
+subject string.
+
+---
+
+### `ERROR: unrecognized arguments: --context` during `az acr build`
+
+**Symptom:** The **Build and push frontend image** step fails:
+
+```
+ERROR: unrecognized arguments: --context ./frontend
+```
+
+**Cause:** `--context` is a Docker CLI flag, not an `az acr build` flag. The build
+context (the directory to send to the build) is the **positional argument** at the
+end of the command.
+
+**Fix:** The correct syntax is:
+
+```bash
+az acr build \
+  --registry $ACR_NAME \
+  --image chatbot/frontend:$TAG \
+  --file frontend/Dockerfile \
+  ./frontend              # ← positional context, no --context flag
+```
+
+---
+
+### `ERROR: Unable to find 'Dockerfile'` during `az acr build`
+
+**Symptom:**
+
+```
+ERROR: Unable to find 'Dockerfile'. Please specify the correct dockerfile path.
+```
+
+**Cause:** `--file` in `az acr build` is resolved **relative to the runner's working
+directory** (the repo root after `actions/checkout`), not relative to the build
+context directory. If you write `--file Dockerfile` when building the frontend, the
+runner looks for `./Dockerfile` at the repo root — which doesn't exist.
+
+**Fix:** Always use the full path from the repo root:
+
+```bash
+--file frontend/Dockerfile   # correct — relative to CWD (repo root)
+--file Dockerfile            # wrong when building from a subdirectory
+```
+
+---
+
+### Backend pod `CrashLoopBackOff` — Python circular import
+
+**Symptom:** Pods start but immediately crash. `helm upgrade --wait` times out with
+`context deadline exceeded`. Running `kubectl logs <backend-pod>` reveals:
+
+```
+ImportError: cannot import name 'limiter' from partially initialized module 'app.main'
+```
+
+**Cause:** A circular import. `main.py` imports a router; the router imports `limiter`
+from `main.py`, which is only half-initialized at that point.
+
+**Fix:** Move any shared singleton (like `Limiter`) to its own module
+(`app/limiter.py`) so neither `main.py` nor the routers import from each other.
+
+**Diagnosis commands:**
+
+```bash
+kubectl get pods                     # spot the CrashLoopBackOff
+kubectl logs <backend-pod-name>      # read the traceback
+kubectl describe pod <backend-pod-name>  # see restart count and events
+```
+
+---
+
+### Helm `yaml: did not find expected key` — merged YAML lines
+
+**Symptom:** `helm upgrade` fails immediately:
+
+```
+Error: YAML parse error on chatbot-on-aks/templates/backend.yaml:
+  error converting YAML to JSON: yaml: line 8: did not find expected key
+```
+
+**Cause:** Two YAML keys that should be on separate lines ended up on the same line
+(e.g., after a git merge or a clumsy edit). The YAML parser sees one invalid token.
+
+**Fix:** Open the named template file, find the offending line, and split it. Every
+key in a ConfigMap or Secret `data:` block must be on its own line with consistent
+indentation.
+
+**Tip:** Run `helm template k8s/aks/chart` locally before pushing — it renders the
+templates and fails fast on YAML errors without touching the cluster.
+
+---
+
+### Postgres pod never becomes `Ready` — `pgvector` extension missing
+
+**Symptom:** Backend logs show `could not open extension control file ... vector.control`
+or LangGraph fails to create its tables on startup.
+
+**Cause:** The `postgres-initdb` ConfigMap (which runs `CREATE EXTENSION IF NOT EXISTS
+vector;`) is not mounted into the pod. The init SQL only runs automatically if it is
+placed in `/docker-entrypoint-initdb.d/` inside the container — and only on the **first
+start** (i.e., when the PersistentVolume is empty).
+
+**Fix:** Confirm the StatefulSet in [k8s/aks/chart/templates/postgres.yaml](k8s/aks/chart/templates/postgres.yaml)
+has both the volume and the volumeMount:
+
+```yaml
+volumes:
+  - name: initdb
+    configMap:
+      name: postgres-initdb
+
+volumeMounts:
+  - name: initdb
+    mountPath: /docker-entrypoint-initdb.d
+```
+
+If you add this after the pod has already started with a non-empty volume, delete
+the PVC and let the StatefulSet recreate it so the init script runs again:
+
+```bash
+kubectl delete statefulset postgres
+kubectl delete pvc postgres-data-postgres-0
+# helm upgrade will recreate both
+```
