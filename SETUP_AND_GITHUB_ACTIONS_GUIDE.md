@@ -274,7 +274,10 @@ NAME               TYPE           CLUSTER-IP    EXTERNAL-IP      PORT(S)        
 frontend-service   LoadBalancer   10.0.12.34    20.82.111.222    80:31234/TCP   2m
 ```
 
-Open `http://20.82.111.222` in your browser — that's your chatbot.
+Open `http://20.82.111.222:3001` in your browser — that's your chatbot.
+
+> The service maps external port **3001** → container port **3000**. Don't forget the
+> port — port 80 is not exposed.
 
 > The IP may show `<pending>` for 1–2 minutes while Azure provisions the load balancer.
 > Just re-run the command until an IP appears.
