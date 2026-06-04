@@ -1,8 +1,9 @@
 name: Build and Deploy to AKS
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   id-token: write   # required for OIDC token exchange
@@ -25,18 +26,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Derive image tag from the release ───────────────────────────────
-      # The published release's tag (e.g. v0.2.0) is the source of truth for
-      # the version. Strip any leading "v" and append the run number so every
-      # build is uniquely traceable: 0.2.0-42.
-      - name: Derive image tag from release
+      # ── 2. Derive image tag from commit SHA ────────────────────────────────
+      # Use the first 7 chars of the commit SHA plus the run number so every
+      # build is uniquely traceable: abc1234-42.
+      - name: Derive image tag from commit
         id: version
         run: |
-          tag="${{ github.event.release.tag_name }}"
-          version="${tag#v}"
-          image_tag="${version}-${{ github.run_number }}"
+          short_sha="${{ github.sha }}"
+          short_sha="${short_sha:0:7}"
+          image_tag="${short_sha}-${{ github.run_number }}"
           echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
-          echo "Release ${tag} → image tag ${image_tag}"
+          echo "Commit ${short_sha} → image tag ${image_tag}"
 
       # ── 3. Evaluation gate (AIOps) ────────────────────────────────────────
       # Runs LLM-as-judge scoring against the golden dataset before anything
