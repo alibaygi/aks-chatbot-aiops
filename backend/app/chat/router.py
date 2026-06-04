@@ -15,7 +15,7 @@ from app.chat.service import (
 )
 from app.database import get_async_session
 from app.dependencies import get_current_user
-from app.main import limiter
+from app.limiter import limiter
 from app.models import User
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
