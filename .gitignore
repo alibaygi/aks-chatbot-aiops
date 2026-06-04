@@ -49,3 +49,12 @@ data/
 docs/
 # Local Helm secrets — never commit (contains real API keys)
 k8s/aks/chart/values-secrets.yaml
+
+# Terraform — state files contain resource IDs and sensitive data
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/tfplan
+
+# Local visualizations / generated GIF assets
+visualizations/

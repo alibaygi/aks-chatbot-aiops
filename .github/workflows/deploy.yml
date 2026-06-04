@@ -1,13 +1,12 @@
 name: Build and Deploy to AKS
 
 on:
-  push:
-    branches:
-      - main
+  release:
+    types: [published]
 
 permissions:
   id-token: write   # required for OIDC token exchange
-  contents: write   # required to push the version-bump commit
+  contents: read    # checkout only — no commit is pushed back
 
 env:
   ACR_REGISTRY: akscontainerregistrydev.azurecr.io
@@ -25,33 +24,19 @@ jobs:
       # ── 1. Checkout ────────────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GH_PAT }}
-          fetch-depth: 0
 
-      # ── 2. Increment version ───────────────────────────────────────────────
-      # Reads VERSION, bumps the patch number, syncs pyproject.toml and
-      # frontend/package.json. The final image tag is <version>-<run_number>
-      # (e.g. 0.1.3-42) so every build is uniquely traceable.
-      - name: Increment patch version
+      # ── 2. Derive image tag from the release ───────────────────────────────
+      # The published release's tag (e.g. v0.2.0) is the source of truth for
+      # the version. Strip any leading "v" and append the run number so every
+      # build is uniquely traceable: 0.2.0-42.
+      - name: Derive image tag from release
         id: version
         run: |
-          current=$(cat VERSION)
-          IFS='.' read -r major minor patch <<< "$current"
-          patch=$((patch + 1))
-          new_version="${major}.${minor}.${patch}"
-          echo "$new_version" > VERSION
-
-          # Sync pyproject.toml
-          sed -i "s/^version = \".*\"/version = \"${new_version}\"/" pyproject.toml
-
-          # Sync frontend/package.json
-          sed -i "s/\"version\": \".*\"/\"version\": \"${new_version}\"/" frontend/package.json
-
-          image_tag="${new_version}-${{ github.run_number }}"
+          tag="${{ github.event.release.tag_name }}"
+          version="${tag#v}"
+          image_tag="${version}-${{ github.run_number }}"
           echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
-          echo "new_version=${new_version}" >> "$GITHUB_OUTPUT"
-          echo "Bumped version: ${current} → ${new_version}, image tag: ${image_tag}"
+          echo "Release ${tag} → image tag ${image_tag}"
 
       # ── 3. Evaluation gate (AIOps) ────────────────────────────────────────
       # Runs LLM-as-judge scoring against the golden dataset before anything
@@ -142,13 +127,3 @@ jobs:
             --wait --timeout 5m
 
           rm -f "$secrets_file"
-
-      # ── 9. Commit version bump ─────────────────────────────────────────────
-      # [skip ci] prevents this commit from triggering another workflow run.
-      - name: Commit and push version bump
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add VERSION pyproject.toml frontend/package.json
-          git commit -m "ci: bump version to ${{ steps.version.outputs.new_version }} [skip ci]"
-          git push origin main

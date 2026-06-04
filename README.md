@@ -18,7 +18,7 @@ There are two halves to the story:
 - [Getting Started](#getting-started)
 - [Phase 1 — Provision Infrastructure](#phase-1--provision-infrastructure)
 - [Phase 2 — Configure GitHub Actions CI/CD](#phase-2--configure-github-actions-cicd)
-- [Phase 3 — Push to Deploy](#phase-3--push-to-deploy)
+- [Phase 3 — Publish a Release to Deploy](#phase-3--publish-a-release-to-deploy)
 - [Manual Deployment to AKS](#manual-deployment-to-aks)
 - [After Deployment: The AIOps Loop](#after-deployment-the-aiops-loop)
 - [Next Steps](#next-steps)
@@ -97,8 +97,8 @@ The agent is given four tools:
 Deploying this project for the first time involves three phases done in order:
 
 1. **Provision infrastructure** (manual, once) — runs entirely in your terminal. First you use the **Azure CLI** to create a storage account for Terraform remote state, then you use **Terraform** to provision the resource group, ACR, and AKS cluster.
-2. **Configure CI/CD** (manual, once) — runs entirely in your terminal. You use the **Azure CLI** to create an App Registration, add a federated OIDC credential, and grant the required roles; then you add five secrets to GitHub.
-3. **Push to deploy** (automatic from here on) — every push to `main` triggers the GitHub Actions pipeline, which builds, tags, pushes images, and rolls out to AKS without any further manual steps.
+2. **Configure CI/CD** (manual, once) — runs entirely in your terminal. You use the **Azure CLI** to create an App Registration, add a federated OIDC credential, and grant the required roles; then you add four secrets to GitHub.
+3. **Publish a release to deploy** (automatic from here on) — publishing a GitHub Release triggers the pipeline, which builds, tags (from the release tag), pushes images, and rolls out to AKS without any further manual steps.
 
 ---
 
@@ -315,18 +315,15 @@ Go to **GitHub → your repo → Settings → Secrets and variables → Actions*
 
 | Secret name | Value | Where to get it |
 |---|---|---|
-| `AZURE_CLIENT_ID` | App Registration client ID | `echo $APP_ID` from Step 3 |
+| `AZURE_CLIENT_ID` | App Registration client ID | `echo $APP_ID` from Step 2 |
 | `AZURE_TENANT_ID` | Azure AD tenant ID | `echo $TENANT_ID` from Step 1 |
 | `AZURE_SUBSCRIPTION_ID` | Your subscription ID | `echo $SUBSCRIPTION_ID` from Step 1 |
 | `HELM_VALUES_SECRETS` | Full contents of `values-secrets.yaml` | See below |
-| `GH_PAT` | GitHub PAT with `contents: write` | GitHub → Settings → Developer settings → PATs |
-| `LANGSMITH_API_KEY` | LangSmith API key (for the evaluation gate) | [smith.langchain.com](https://smith.langchain.com) → Settings → API Keys |
-| `OPENAI_API_KEY` | OpenAI API key (used by the LLM-as-judge evaluator) | [platform.openai.com](https://platform.openai.com) → API keys |
 
-> **Note — evaluation gate:** the last two secrets are only needed if you enable the
-> evaluation gate. To turn it on, also create a **repository variable** (not a secret)
-> named `RUN_EVAL_GATE` with value `true`: GitHub → your repo → Settings → Secrets and
-> variables → Actions → **Variables** tab → New repository variable.
+> **Note — evaluation gate:** two more secrets are needed if you enable the quality gate.
+> On the **Secrets tab** add `LANGSMITH_API_KEY` ([smith.langchain.com](https://smith.langchain.com) → Settings → API Keys)
+> and `OPENAI_API_KEY` ([platform.openai.com](https://platform.openai.com) → API keys).
+> Then on the **Variables tab** create `RUN_EVAL_GATE = true`.
 
 For `HELM_VALUES_SECRETS`, copy `k8s/aks/chart/values-secrets.yaml.example`, fill in real values, and paste the entire YAML as the secret value:
 
@@ -338,13 +335,18 @@ secrets:
     secretKey: "output-of-openssl-rand-hex-32"
     openaiApiKey: "sk-..."
     tavilyApiKey: "tvly-..."
+    langsmithApiKey: ""   # optional — leave empty to disable runtime tracing
 ```
 
 ---
 
-## Phase 3 — Push to Deploy
+## Phase 3 — Publish a Release to Deploy
 
-Once Phases 1 and 2 are complete, **push any commit to `main`** and the pipeline runs automatically. The workflow file is [.github/workflows/deploy.yml](.github/workflows/deploy.yml).
+Once Phases 1 and 2 are complete, **publish a GitHub Release** and the pipeline runs automatically. The workflow file is [.github/workflows/deploy.yml](.github/workflows/deploy.yml).
+
+Go to your repo → **Releases** (right sidebar) → **Draft a new release** → choose a tag like `v0.2.0` → **Publish release**. The pipeline triggers immediately and uses the release tag as the image version (e.g. `v0.2.0` → images tagged `0.2.0-<run_number>`).
+
+> Or from the terminal: `gh release create v0.2.0 --title "v0.2.0" --notes "first release"`
 
 ### Why CI/CD matters for an LLM application
 
@@ -360,12 +362,12 @@ The pipeline treats the entire stack — frontend, backend, and the agent's prom
 
 ```mermaid
 flowchart LR
-    GIT(["git push main"]) --> S1
+    GIT(["Publish GitHub Release\n(e.g. v0.2.0)"]) --> S1
 
-    subgraph S1["1. Increment Version"]
+    subgraph S1["1. Derive Version"]
         direction TB
-        V1["Read VERSION file"] --> V2["Bump patch number"]
-        V2 --> V3["Sync pyproject.toml and package.json"]
+        V1["Read release tag (v0.2.0)"] --> V2["Strip 'v' prefix"]
+        V2 --> V3["image_tag = 0.2.0-run_number"]
     end
 
     S1 --> S2
@@ -380,7 +382,7 @@ flowchart LR
     subgraph S3["3. Build and Push Images"]
         direction TB
         B1["az acr build backend"] --> B2["az acr build frontend"]
-        B2 --> B3["Images tagged version-run_number<br/>pushed to ACR"]
+        B2 --> B3["Images tagged 0.2.0-run_number<br/>pushed to ACR"]
     end
 
     S3 --> S4
@@ -391,24 +393,15 @@ flowchart LR
         D2 --> D3["helm upgrade install<br/>set image.tag"]
         D3 --> D4["Delete temp file"]
     end
-
-    S4 --> S5
-
-    subgraph S5["5. Commit Version Bump"]
-        direction TB
-        C1["git add VERSION, pyproject.toml, package.json"] --> C2["git commit skip-ci<br/>push to main"]
-    end
 ```
 
-**Stage 1 — Increment version**: reads `VERSION` (e.g. `0.1.2`), bumps the patch number, and writes it back to `pyproject.toml` and `frontend/package.json`. The final image tag is `<version>-<run_number>` (e.g. `0.1.3-42`), making every build uniquely traceable.
+**Stage 1 — Derive version**: reads the release tag (e.g. `v0.2.0`), strips the leading `v`, and appends the run number to form the image tag (`0.2.0-42`). Every build is uniquely traceable to the exact pipeline run that produced it.
 
 **Stage 2 — Azure login (OIDC)**: uses `azure/login@v2` to exchange the runner's short-lived GitHub token for an Azure access token using the OIDC trust set up in Phase 2. No passwords or client secrets touch the runner.
 
 **Stage 3 — Build and push images**: runs `az acr build` for both the backend and frontend. The Docker build executes **inside Azure** (ACR Tasks) — no Docker daemon is needed on the runner and no registry credentials are ever handled by the workflow. Images are pushed to `akscontainerregistrydev.azurecr.io`.
 
 **Stage 4 — Deploy to AKS**: fetches cluster credentials with `az aks get-credentials`, writes the `HELM_VALUES_SECRETS` GitHub Secret to a temporary file, runs `helm upgrade --install` with the new image tags injected via `--set`, then immediately deletes the temp file. This is a rolling update — Kubernetes replaces pods one at a time with zero downtime.
-
-**Stage 5 — Commit version bump**: pushes the updated `VERSION`, `pyproject.toml`, and `frontend/package.json` back to `main` with a `[skip ci]` tag so this commit does not re-trigger the pipeline.
 
 ---
 
