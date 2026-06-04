@@ -6,7 +6,8 @@ metadata:
 data:
   ALGORITHM: {{ .Values.backend.config.algorithm | quote }}
   ACCESS_TOKEN_EXPIRE_MINUTES: {{ .Values.backend.config.accessTokenExpireMinutes | quote }}
-  ALLOWED_ORIGINS: {{ .Values.backend.config.allowedOrigins | quote }}  LANGSMITH_PROJECT: {{ .Values.backend.config.langsmithProject | quote }}
+  ALLOWED_ORIGINS: {{ .Values.backend.config.allowedOrigins | quote }}
+  LANGSMITH_PROJECT: {{ .Values.backend.config.langsmithProject | quote }}
   LANGSMITH_TRACING: {{ .Values.backend.config.langsmithTracing | quote }}
 ---
 # ── Deployment ────────────────────────────────────────────────────────────────
